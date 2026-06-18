@@ -19,6 +19,14 @@ var pJS = function(tag_id, params){
       h: canvas_el.offsetHeight
     },
     particles: {
+      line_linked: {
+        enable: true,
+        distance: 100,
+        onhover: {
+          enable: true,
+          distance: 50
+        }
+      },
       number: {
         value: 400,
         density: {
@@ -49,7 +57,7 @@ var pJS = function(tag_id, params){
         random: false,
         anim: {
           enable: false,
-          speed: 2,
+          speed: 0.5,
           opacity_min: 0,
           sync: false
         }
@@ -65,15 +73,19 @@ var pJS = function(tag_id, params){
         }
       },
       line_linked: {
-        enable: true,
+        enable: false,
         distance: 100,
         color: '#fff',
         opacity: 1,
-        width: 1
+        width: 1,
+        onhover: {
+          enable: true,
+          distance: 50
+        }
       },
       move: {
         enable: true,
-        speed: 2,
+        speed: 0.5,
         direction: 'none',
         random: false,
         straight: false,
@@ -95,7 +107,7 @@ var pJS = function(tag_id, params){
           mode: 'grab'
         },
         onclick: {
-          enable: true,
+          enable: false,
           mode: 'push'
         },
         resize: true
@@ -110,10 +122,6 @@ var pJS = function(tag_id, params){
         bubble:{
           distance: 200,
           size: 80,
-          duration: 0.4
-        },
-        repulse:{
-          distance: 200,
           duration: 0.4
         },
         push:{
@@ -147,10 +155,10 @@ var pJS = function(tag_id, params){
     move_speed: pJS.particles.move.speed,
     line_linked_distance: pJS.particles.line_linked.distance,
     line_linked_width: pJS.particles.line_linked.width,
+    line_linked_onhover_distance: pJS.particles.line_linked.onhover.distance,
     mode_grab_distance: pJS.interactivity.modes.grab.distance,
     mode_bubble_distance: pJS.interactivity.modes.bubble.distance,
-    mode_bubble_size: pJS.interactivity.modes.bubble.size,
-    mode_repulse_distance: pJS.interactivity.modes.repulse.distance
+    mode_bubble_size: pJS.interactivity.modes.bubble.size
   };
 
 
@@ -172,11 +180,11 @@ var pJS = function(tag_id, params){
     pJS.particles.size.anim.speed = pJS.tmp.obj.size_anim_speed * pJS.canvas.pxratio;
     pJS.particles.move.speed = pJS.tmp.obj.move_speed * pJS.canvas.pxratio;
     pJS.particles.line_linked.distance = pJS.tmp.obj.line_linked_distance * pJS.canvas.pxratio;
+    pJS.particles.line_linked.onhover.distance = pJS.tmp.obj.line_linked_onhover_distance * pJS.canvas.pxratio;
     pJS.interactivity.modes.grab.distance = pJS.tmp.obj.mode_grab_distance * pJS.canvas.pxratio;
     pJS.interactivity.modes.bubble.distance = pJS.tmp.obj.mode_bubble_distance * pJS.canvas.pxratio;
     pJS.particles.line_linked.width = pJS.tmp.obj.line_linked_width * pJS.canvas.pxratio;
     pJS.interactivity.modes.bubble.size = pJS.tmp.obj.mode_bubble_size * pJS.canvas.pxratio;
-    pJS.interactivity.modes.repulse.distance = pJS.tmp.obj.mode_repulse_distance * pJS.canvas.pxratio;
 
   };
 
@@ -505,6 +513,9 @@ var pJS = function(tag_id, params){
 
   pJS.fn.particlesUpdate = function(){
 
+    /* reset drawn lines tracking */
+    pJS.tmp.drawn_lines = [];
+
     for(var i = 0; i < pJS.particles.array.length; i++){
 
       /* the particle */
@@ -602,10 +613,6 @@ var pJS = function(tag_id, params){
         pJS.fn.modes.bubbleParticle(p);
       }
 
-      if(isInArray('repulse', pJS.interactivity.events.onhover.mode) || isInArray('repulse', pJS.interactivity.events.onclick.mode)){
-        pJS.fn.modes.repulseParticle(p);
-      }
-
       /* interaction auto between particles */
       if(pJS.particles.line_linked.enable || pJS.particles.move.attract.enable){
         for(var j = i + 1; j < pJS.particles.array.length; j++){
@@ -673,6 +680,26 @@ var pJS = function(tag_id, params){
 
   /* ---------- pJS functions - particles interaction ------------ */
 
+  /* Check if two line segments intersect */
+  pJS.fn.interact.lineSegmentsIntersect = function(x1, y1, x2, y2, x3, y3, x4, y4){
+    var ccw = function(ax, ay, bx, by, cx, cy){
+      return (cy - ay) * (bx - ax) > (by - ay) * (cx - ax);
+    };
+    
+    return ccw(x1, y1, x3, y3, x4, y4) != ccw(x2, y2, x3, y3, x4, y4) && ccw(x1, y1, x2, y2, x3, y3) != ccw(x1, y1, x2, y2, x4, y4);
+  };
+
+  /* Check if a line overlaps with any existing lines */
+  pJS.fn.interact.lineOverlaps = function(x1, y1, x2, y2){
+    for(var i = 0; i < pJS.tmp.drawn_lines.length; i++){
+      var line = pJS.tmp.drawn_lines[i];
+      if(pJS.fn.interact.lineSegmentsIntersect(x1, y1, x2, y2, line.x1, line.y1, line.x2, line.y2)){
+        return true;
+      }
+    }
+    return false;
+  };
+
   pJS.fn.interact.linkParticles = function(p1, p2){
 
     var dx = p1.x - p2.x,
@@ -681,6 +708,27 @@ var pJS = function(tag_id, params){
 
     /* draw a line between p1 and p2 if the distance between them is under the config distance */
     if(dist <= pJS.particles.line_linked.distance){
+
+      /* check if line linking should only happen near mouse */
+      if(pJS.particles.line_linked.onhover.enable){
+        var dx_p1_mouse = p1.x - pJS.interactivity.mouse.pos_x,
+            dy_p1_mouse = p1.y - pJS.interactivity.mouse.pos_y,
+            dist_p1_mouse = Math.sqrt(dx_p1_mouse*dx_p1_mouse + dy_p1_mouse*dy_p1_mouse);
+        
+        var dx_p2_mouse = p2.x - pJS.interactivity.mouse.pos_x,
+            dy_p2_mouse = p2.y - pJS.interactivity.mouse.pos_y,
+            dist_p2_mouse = Math.sqrt(dx_p2_mouse*dx_p2_mouse + dy_p2_mouse*dy_p2_mouse);
+        
+        /* only draw line if at least one particle is within mouse distance */
+        if(dist_p1_mouse > pJS.particles.line_linked.onhover.distance && dist_p2_mouse > pJS.particles.line_linked.onhover.distance){
+          return;
+        }
+      }
+
+      /* check if this line overlaps with any existing lines */
+      if(pJS.fn.interact.lineOverlaps(p1.x, p1.y, p2.x, p2.y)){
+        return;
+      }
 
       var opacity_line = pJS.particles.line_linked.opacity - (dist / (1/pJS.particles.line_linked.opacity)) / pJS.particles.line_linked.distance;
 
@@ -698,6 +746,9 @@ var pJS = function(tag_id, params){
         pJS.canvas.ctx.lineTo(p2.x, p2.y);
         pJS.canvas.ctx.stroke();
         pJS.canvas.ctx.closePath();
+
+        /* store the drawn line for overlap detection */
+        pJS.tmp.drawn_lines.push({x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y});
 
       }
 
@@ -921,104 +972,6 @@ var pJS = function(tag_id, params){
   };
 
 
-  pJS.fn.modes.repulseParticle = function(p){
-
-    if(pJS.interactivity.events.onhover.enable && isInArray('repulse', pJS.interactivity.events.onhover.mode) && pJS.interactivity.status == 'mousemove') {
-
-      var dx_mouse = p.x - pJS.interactivity.mouse.pos_x,
-          dy_mouse = p.y - pJS.interactivity.mouse.pos_y,
-          dist_mouse = Math.sqrt(dx_mouse*dx_mouse + dy_mouse*dy_mouse);
-
-      var normVec = {x: dx_mouse/dist_mouse, y: dy_mouse/dist_mouse},
-          repulseRadius = pJS.interactivity.modes.repulse.distance,
-          velocity = 100,
-          repulseFactor = clamp((1/repulseRadius)*(-1*Math.pow(dist_mouse/repulseRadius,2)+1)*repulseRadius*velocity, 0, 50);
-      
-      var pos = {
-        x: p.x + normVec.x * repulseFactor,
-        y: p.y + normVec.y * repulseFactor
-      }
-
-      if(pJS.particles.move.out_mode == 'bounce'){
-        if(pos.x - p.radius > 0 && pos.x + p.radius < pJS.canvas.w) p.x = pos.x;
-        if(pos.y - p.radius > 0 && pos.y + p.radius < pJS.canvas.h) p.y = pos.y;
-      }else{
-        p.x = pos.x;
-        p.y = pos.y;
-      }
-    
-    }
-
-
-    else if(pJS.interactivity.events.onclick.enable && isInArray('repulse', pJS.interactivity.events.onclick.mode)) {
-
-      if(!pJS.tmp.repulse_finish){
-        pJS.tmp.repulse_count++;
-        if(pJS.tmp.repulse_count == pJS.particles.array.length){
-          pJS.tmp.repulse_finish = true;
-        }
-      }
-
-      if(pJS.tmp.repulse_clicking){
-
-        var repulseRadius = Math.pow(pJS.interactivity.modes.repulse.distance/6, 3);
-
-        var dx = pJS.interactivity.mouse.click_pos_x - p.x,
-            dy = pJS.interactivity.mouse.click_pos_y - p.y,
-            d = dx*dx + dy*dy;
-
-        var force = -repulseRadius / d * 1;
-
-        function process(){
-
-          var f = Math.atan2(dy,dx);
-          p.vx = force * Math.cos(f);
-          p.vy = force * Math.sin(f);
-
-          if(pJS.particles.move.out_mode == 'bounce'){
-            var pos = {
-              x: p.x + p.vx,
-              y: p.y + p.vy
-            }
-            if (pos.x + p.radius > pJS.canvas.w) p.vx = -p.vx;
-            else if (pos.x - p.radius < 0) p.vx = -p.vx;
-            if (pos.y + p.radius > pJS.canvas.h) p.vy = -p.vy;
-            else if (pos.y - p.radius < 0) p.vy = -p.vy;
-          }
-
-        }
-
-        // default
-        if(d <= repulseRadius){
-          process();
-        }
-
-        // bang - slow motion mode
-        // if(!pJS.tmp.repulse_finish){
-        //   if(d <= repulseRadius){
-        //     process();
-        //   }
-        // }else{
-        //   process();
-        // }
-        
-
-      }else{
-
-        if(pJS.tmp.repulse_clicking == false){
-
-          p.vx = p.vx_i;
-          p.vy = p.vy_i;
-        
-        }
-
-      }
-
-    }
-
-  }
-
-
   pJS.fn.modes.grabParticle = function(p){
 
     if(pJS.interactivity.events.onhover.enable && pJS.interactivity.status == 'mousemove'){
@@ -1029,6 +982,11 @@ var pJS = function(tag_id, params){
 
       /* draw a line between the cursor and the particle if the distance between them is under the config distance */
       if(dist_mouse <= pJS.interactivity.modes.grab.distance){
+
+        /* check if this line overlaps with any existing lines */
+        if(pJS.fn.interact.lineOverlaps(p.x, p.y, pJS.interactivity.mouse.pos_x, pJS.interactivity.mouse.pos_y)){
+          return;
+        }
 
         var opacity_line = pJS.interactivity.modes.grab.line_linked.opacity - (dist_mouse / (1/pJS.interactivity.modes.grab.line_linked.opacity)) / pJS.interactivity.modes.grab.distance;
 
@@ -1046,6 +1004,9 @@ var pJS = function(tag_id, params){
           pJS.canvas.ctx.lineTo(pJS.interactivity.mouse.pos_x, pJS.interactivity.mouse.pos_y);
           pJS.canvas.ctx.stroke();
           pJS.canvas.ctx.closePath();
+
+          /* store the drawn line for overlap detection */
+          pJS.tmp.drawn_lines.push({x1: p.x, y1: p.y, x2: pJS.interactivity.mouse.pos_x, y2: pJS.interactivity.mouse.pos_y});
 
         }
 
@@ -1139,15 +1100,6 @@ var pJS = function(tag_id, params){
 
             case 'bubble':
               pJS.tmp.bubble_clicking = true;
-            break;
-
-            case 'repulse':
-              pJS.tmp.repulse_clicking = true;
-              pJS.tmp.repulse_count = 0;
-              pJS.tmp.repulse_finish = false;
-              setTimeout(function(){
-                pJS.tmp.repulse_clicking = false;
-              }, pJS.interactivity.modes.repulse.duration*1000)
             break;
 
           }
